@@ -1,5 +1,5 @@
 from troposphere import Template, Ref, Output, Export, Sub
-from troposphere.ec2 import VPC
+from troposphere.ec2 import VPC, InternetGateway, VPCGatewayAttachment
 
 class vpc(object):
 
@@ -9,8 +9,13 @@ class vpc(object):
     # VPC vars
     self.vpc_name = "VPC"
     self.vpc_cidr = sceptre_user_data['resources']['vpc']['cidr']
+    # Internet Gateway vars
+    self.igw_name = "InternetGateway"
+    self.igw_attachment = str(self.igw_name + "Attachment")
 
+    # Create stack resources
     self.create_vpc()
+    self.create_igw()
 
   # Define CloudFormation VPC resource
   def create_vpc(self):
@@ -30,6 +35,22 @@ class vpc(object):
         Export=Export(
           Sub("${AWS::StackName}-" + self.vpc_name + "-ID")
         )
+      )
+    )
+
+  # Define CloudFormation Internet Gateway resources
+  def create_igw(self):
+    t = self.template
+    t.add_resource(
+      InternetGateway(
+        self.igw_name
+      )
+    )
+    t.add_resource(
+      VPCGatewayAttachment(
+        self.igw_attachment,
+        VpcId=Ref(self.vpc_name),
+        InternetGatewayId=Ref(self.igw_name)
       )
     )
 
