@@ -3,8 +3,9 @@ sceptre_user_data:
   resources:
     vpc:
       cidr: "10.0.0.0/16"
-      subnets:
-        public:
+      public:
+        route_table_name: "PublicRouteTable"
+        subnets:
           - { name: "PubNet01", az: us-east-1a, cidr: "10.0.0.0/24" }
           - { name: "PubNet02", az: us-east-1b, cidr: "10.0.1.0/24" }
           - { name: "PubNet03", az: us-east-1c, cidr: "10.0.2.0/24" }

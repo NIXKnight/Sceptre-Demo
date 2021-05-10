@@ -1,5 +1,13 @@
 from troposphere import Template, Ref, Output, Export, Sub
-from troposphere.ec2 import VPC, InternetGateway, VPCGatewayAttachment, Subnet
+from troposphere.ec2 import (
+  VPC,
+  InternetGateway,
+  VPCGatewayAttachment,
+  Subnet,
+  Route,
+  RouteTable,
+  SubnetRouteTableAssociation
+)
 
 class vpc(object):
 
@@ -12,12 +20,14 @@ class vpc(object):
     # Internet Gateway vars
     self.igw_name = "InternetGateway"
     self.igw_attachment = str(self.igw_name + "Attachment")
-    # Public Subnet vars
-    self.public_subnets = sceptre_user_data['resources']['vpc']['subnets']['public']
+    # Public resources vars
+    self.public_subnets = sceptre_user_data['resources']['vpc']['public']['subnets']
+    self.public_route_table_name = sceptre_user_data['resources']['vpc']['public']['route_table_name']
 
     # Create stack resources
     self.create_vpc()
     self.create_igw()
+    self.create_public_resources()
     self.create_subnets()
 
   ## Generic VPC functions
@@ -30,6 +40,41 @@ class vpc(object):
         CidrBlock=cidr_block,
         VpcId=Ref(vpc_name),
         AvailabilityZone=availability_zone
+      )
+    )
+
+  # Create Route Table resource
+  def create_route_table(self, route_table_name, vpc_name):
+    t = self.template
+    t.add_resource(
+      RouteTable(
+        route_table_name,
+        VpcId=Ref(vpc_name)
+      )
+    )
+
+  # Create Subnet -> Route Table association resource
+  def create_subnet_route_association(self, subnet_name, route_table_name):
+    association_name = subnet_name + "RouteAssociation"
+    t = self.template
+    t.add_resource(
+      SubnetRouteTableAssociation(
+        association_name,
+        SubnetId=Ref(subnet_name),
+        RouteTableId=Ref(route_table_name)
+      )
+    )
+
+  # Create Route resource
+  def create_route(self, route_name, route_dependency, gateway_name, destination_cidr_block, route_table_name):
+    t = self.template
+    t.add_resource(
+      Route(
+        route_name,
+        DependsOn=route_dependency,
+        GatewayId=Ref(gateway_name),
+        DestinationCidrBlock=destination_cidr_block,
+        RouteTableId=Ref(route_table_name)
       )
     )
 
@@ -70,6 +115,15 @@ class vpc(object):
       )
     )
 
+  # Define CloudFormation public network(s) resource(s)
+  def create_public_resources(self):
+    igw_attachment = self.igw_attachment
+    igw_name = self.igw_name
+    public_route_table_name = self.public_route_table_name
+    vpc_name = self.vpc_name
+    self.create_route_table(public_route_table_name, vpc_name)
+    self.create_route("PublicInternetRoute", igw_attachment, igw_name, "0.0.0.0/0", public_route_table_name)
+
   # Define CloudFormation Subnet resources
   def create_subnets(self):
     public_subnets = self.public_subnets
@@ -79,6 +133,7 @@ class vpc(object):
       vpc_name = self.vpc_name
       az = public_subnets[list_item]["az"]
       self.create_subnet(name, cidr, vpc_name, az)
+      self.create_subnet_route_association(name, self.public_route_table_name)
 
 # Return CloudFormation stack as a string
 def sceptre_handler(sceptre_user_data):
