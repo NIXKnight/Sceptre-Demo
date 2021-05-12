@@ -1,4 +1,11 @@
-from troposphere import Template, Ref, Output, Export, Sub
+from troposphere import (
+  Template,
+  Ref,
+  Output,
+  Export,
+  Sub,
+  GetAtt
+)
 from troposphere.ec2 import (
   VPC,
   InternetGateway,
@@ -6,7 +13,9 @@ from troposphere.ec2 import (
   Subnet,
   Route,
   RouteTable,
-  SubnetRouteTableAssociation
+  SubnetRouteTableAssociation,
+  EIP,
+  NatGateway
 )
 
 class vpc(object):
@@ -14,6 +23,7 @@ class vpc(object):
   def __init__(self, sceptre_user_data):
     self.template = Template()
     self.template.set_version()
+    self.sceptre_user_data = sceptre_user_data
     # VPC vars
     self.vpc_name = "VPC"
     self.vpc_cidr = sceptre_user_data['resources']['vpc']['cidr']
@@ -22,12 +32,15 @@ class vpc(object):
     self.igw_attachment = str(self.igw_name + "Attachment")
     # Public resources vars
     self.public_subnets = sceptre_user_data['resources']['vpc']['public']['subnets']
-    self.public_route_table_name = sceptre_user_data['resources']['vpc']['public']['route_table_name']
+    self.public_route_table_name = "PublicRouteTable"
+    # Private resources vars
+    self.private_subnets = sceptre_user_data['resources']['vpc']['private']['subnets']
 
     # Create stack resources
     self.create_vpc()
     self.create_igw()
     self.create_public_resources()
+    self.create_private_resources()
     self.create_subnets()
 
   ## Generic VPC functions
@@ -66,17 +79,9 @@ class vpc(object):
     )
 
   # Create Route resource
-  def create_route(self, route_name, route_dependency, gateway_name, destination_cidr_block, route_table_name):
+  def create_route(self, route_dict):
     t = self.template
-    t.add_resource(
-      Route(
-        route_name,
-        DependsOn=route_dependency,
-        GatewayId=Ref(gateway_name),
-        DestinationCidrBlock=destination_cidr_block,
-        RouteTableId=Ref(route_table_name)
-      )
-    )
+    t.add_resource(Route(**route_dict))
 
   # Define CloudFormation VPC resource
   def create_vpc(self):
@@ -119,10 +124,54 @@ class vpc(object):
   def create_public_resources(self):
     igw_attachment = self.igw_attachment
     igw_name = self.igw_name
-    public_route_table_name = self.public_route_table_name
+    public_route_table_name = "PublicRouteTable"
     vpc_name = self.vpc_name
-    self.create_route_table(public_route_table_name, vpc_name)
-    self.create_route("PublicInternetRoute", igw_attachment, igw_name, "0.0.0.0/0", public_route_table_name)
+    self.create_route_table(self.public_route_table_name, vpc_name)
+    route_dict = {
+      "title": "PublicInternetRoute",
+      "DependsOn": igw_attachment,
+      "GatewayId": Ref(self.igw_name),
+      "DestinationCidrBlock": "0.0.0.0/0",
+      "RouteTableId": Ref(self.public_route_table_name)
+    }
+    self.create_route(route_dict)
+
+  # Define CloudFormation private network(s) resource(s)
+  def create_private_resources(self):
+    # If only a single NAT gateway name is defined, then this implies that the environment may have
+    # multiple private subnets that will be attached with that single NAT gateway via a single private
+    # route table.
+    vpc_name = self.vpc_name
+    t = self.template
+    if "single_nat_gateway" in self.sceptre_user_data['resources']['vpc']['private']:
+      if self.sceptre_user_data['resources']['vpc']['private']['single_nat_gateway'] is True:
+        nat_gateway_name = "PrivateNATGateway"
+        nat_gateway_subnet = self.public_subnets[0]["name"]
+        nat_gateway_eip = nat_gateway_name + "EIP"
+        nat_gateway_route_name = nat_gateway_name + "Route"
+        private_route_table_name = "PrivateNetRouteTable"
+        self.create_route_table(private_route_table_name, vpc_name)
+        t.add_resource(
+          EIP(
+            nat_gateway_eip,
+            Domain="vpc"
+          )
+        )
+        t.add_resource(
+          NatGateway(
+            nat_gateway_name,
+            AllocationId=GetAtt(nat_gateway_eip, 'AllocationId'),
+            SubnetId=Ref(nat_gateway_subnet)
+          )
+        )
+        route_dict = {
+          "title": "PrivateRouteTable",
+          "NatGatewayId": Ref(nat_gateway_name),
+          "DestinationCidrBlock": "0.0.0.0/0",
+          "RouteTableId": Ref(private_route_table_name),
+        }
+        self.create_route(route_dict)
+
 
   # Define CloudFormation Subnet resources
   def create_subnets(self):
